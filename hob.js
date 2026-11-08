@@ -36,7 +36,8 @@ const NGL = process.env.HOB_PI_NGL;
 // One GPU only: left to itself llama.cpp also spreads the model onto an
 // integrated GPU, which on the G14 (RTX + 890M) is 3x slower than RTX + CPU.
 // Hob's llama-server uses Vulkan, where Vulkan0 is the discrete GPU here.
-const DEVICE = process.env.HOB_PI_DEVICE ?? "Vulkan0";
+// macOS has Metal and one GPU, so there's nothing to pick.
+const DEVICE = process.env.HOB_PI_DEVICE ?? (platform() === "darwin" ? "" : "Vulkan0");
 const BASE = `http://127.0.0.1:${PORT}`;
 const LOG = join(tmpdir(), `hob-pi-${PORT}.log`);
 

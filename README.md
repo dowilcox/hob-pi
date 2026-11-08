@@ -1,93 +1,109 @@
-# Pi on Hob's local models
+# hob-pi
 
-[Pi](https://pi.dev) (the `pi` coding agent, 1.5+) can run on the models [Hob](https://hob.chat) has already downloaded, with no account and nothing leaving the machine. Hob runs models with llama.cpp, and it downloads llama.cpp's own server (`llama-server`) for its vision feature. That server speaks the OpenAI chat API, including tool calls, which Pi can use as a custom provider.
+A [Pi](https://pi.dev) extension that runs Pi on the local models [Hob](https://hob.chat) has already downloaded. It needs no account or API key, and nothing leaves your machine.
 
-Tested 8 Nov 2026 on this laptop (Zephyrus G14, RTX 5070 Ti 12 GB, Radeon 890M) with Pi 1.5.0, Hob 0.2.6's `llama-server` build 11433 (Vulkan), and Gemma 4 E4B. That included Pi inside Impulse with Impulse's Pi extension: tool calls, the merge question and turn states all worked.
+Hob runs models with llama.cpp, and for its vision feature it downloads llama.cpp's own server, `llama-server`. That server speaks the OpenAI chat API, tool calls included. This extension registers Hob's models as a Pi provider and starts and stops `llama-server` for you.
 
-## What Hob has here
+## Features
 
-| | Path |
-|---|---|
-| Hob's folder | `~/.config/Hob` (`settings.json` has `activeModelId`, and `downloadsDir` if setup put downloads on another drive) |
-| Models | `~/.config/Hob/models/*.gguf` |
-| llama.cpp server | `~/.config/Hob/vision/server-b11433/llama-b11433/llama-server` (its `.so` libraries sit beside it) |
+- **Finds Hob automatically:** its data folder, its models (including a custom downloads drive set in Hob's setup) and its bundled `llama-server`.
+- **Adds a `hob` provider to Pi:** every downloaded model shows up in `/model` and in `pi --list-models hob`.
+- **Starts the server on demand:** the server starts on the first prompt to a Hob model and listens on `127.0.0.1` only. Pi's footer shows progress while the model loads.
+- **Switches models:** picking another Hob model restarts the server with that model.
+- **Cleans up:** quitting Pi stops any server the extension started.
+- **Fits models to your GPU:** llama.cpp decides how many layers fit in GPU memory and keeps the rest on the CPU, so models larger than your VRAM still load.
 
-The models, smallest first, as Pi lists them (`hob/<id>`):
+## Requirements
 
-| Pi model id | Size | Notes |
-|---|---|---|
-| `gemma-4-e4b_q4_0-it` | 4.8 GB | Fits on the RTX GPU with room to spare, ~87 tokens/s. Good enough for simple tool use. |
-| `qwen3.8-27b-ud-iq4_xs` | 13.3 GB | Dense 27B: partly on the CPU here, so slow. |
-| `gemma-4-26b_q4_0-it` | 13.4 GB | Hob's default. MoE (4B active): llama.cpp keeps part of it on the CPU, ~42 tokens/s. The first load can take a minute or two. |
-| `qwen3.6-35b-a3b-ud-iq4_xs` | 16.5 GB | MoE (3B active), the strongest at tool calling, but tight on 12 GB VRAM + 30 GB RAM. Close games and other big apps first. |
+- Pi 1.5 or later
+- Hob, with at least one model downloaded and the vision feature's `llama-server` installed
+- Linux, macOS or Windows (tested on Linux)
 
-Bigger models compete with anything else on the GPU (a game, Hob itself). `nvidia-smi` shows what's using it.
+## Installation
 
-## The easy way: the `hob.js` extension
+Install the extension for every Pi session:
 
-`~/hob-pi/hob.js` is a Pi extension that does all of the manual steps below by itself:
-
-- finds Hob's folder, its models and its `llama-server` (it follows `downloadsDir`)
-- registers them as Pi's `hob` provider, so they appear in `/model` and `pi --list-models hob`
-- before a prompt to a Hob model, starts `llama-server` on that model (127.0.0.1 only, port 8091), waits until it's loaded, and shows "loading …" in Pi's footer meanwhile
-- switching to another Hob model in `/model` restarts the server with it
-- quitting Pi stops a server it started
-- `/hob` shows what it found and whether the server is running; `/hob stop` stops it
-
-Install it for every Pi:
-
-```fish
+```sh
 mkdir -p ~/.pi/agent/extensions
-cp ~/hob-pi/hob.js ~/.pi/agent/extensions/hob.js
+curl -fsSL -o ~/.pi/agent/extensions/hob.js \
+  https://raw.githubusercontent.com/dowilcox/hob-pi/main/hob.js
 ```
 
-(or try it once without installing: `pi -e ~/hob-pi/hob.js`). Then:
+Or clone the repository and load the extension for a single session:
 
-```fish
+```sh
+git clone https://github.com/dowilcox/hob-pi.git
+pi -e hob-pi/hob.js
+```
+
+## Usage
+
+Start Pi with a Hob model:
+
+```sh
 pi --provider hob --model gemma-4-e4b_q4_0-it
 ```
 
-or pick a `hob/…` model with `/model` inside Pi. To make it the default, add it to `~/.pi/agent/settings.json`:
+Or pick any `hob/…` model with `/model` inside Pi. Model ids are the GGUF file names in lowercase, without the extension.
+
+To make a Hob model the default, add it to `~/.pi/agent/settings.json`:
 
 ```json
 { "defaultProvider": "hob", "defaultModel": "gemma-4-e4b_q4_0-it" }
 ```
 
-The first prompt after starting takes a few seconds longer while the model loads, longer for the big ones (they're read from disk).
+The first prompt of a session waits while the model loads. Large models can take a minute or two when the model file isn't already cached in memory.
 
-### Settings
+### Commands
 
-Environment variables, read when Pi starts:
+| Command | Description |
+|---|---|
+| `/hob` | Shows the Hob folder, the `llama-server` path, the server status and the available models |
+| `/hob stop` | Stops the server this Pi started |
 
-| Variable | Default | |
+## Configuration
+
+The extension reads these environment variables when Pi starts:
+
+| Variable | Default | Description |
 |---|---|---|
-| `HOB_DIR` | `~/.config/Hob` | Hob's folder (macOS: `~/Library/Application Support/Hob`) |
-| `HOB_PI_PORT` | `8091` | The server's port. Use a different one per Pi if two Pis should run different models at once. |
-| `HOB_PI_CTX` | `32768` | Context size in tokens. More costs GPU memory. Pi's system prompt and tools take ~5–10K. |
-| `HOB_PI_NGL` | (unset) | Layers on the GPU. Unset, llama.cpp fits the model by itself: as many layers as fit on the GPU, the rest (a MoE model's experts first) on the CPU. A fixed number turns that off, so `99` makes a model bigger than 12 GB fail with `ErrorOutOfDeviceMemory`. |
-| `HOB_PI_DEVICE` | `Vulkan0` | The GPU to use (the RTX here). `Vulkan1` is the 890M; `""` lets llama.cpp spread the model over both, which for Gemma 4 26B was 3x slower (14 vs 42 tokens/s). |
-| `HOB_PI_ARGS` | | Extra `llama-server` arguments, e.g. `--n-cpu-moe 20` to keep a MoE model's experts on the CPU |
-| `HOB_PI_SERVER` | Hob's | Another `llama-server` to use |
+| `HOB_DIR` | Platform default¹ | Hob's data folder |
+| `HOB_PI_PORT` | `8091` | Server port. To run different models at once, give each Pi session its own port. |
+| `HOB_PI_CTX` | `32768` | Context size in tokens. A larger context uses more GPU memory. Pi's system prompt and tools take about 5–10K. |
+| `HOB_PI_NGL` | unset | Number of layers to put on the GPU. Leave it unset to let llama.cpp fit the model to available memory. A fixed value turns fitting off, and a model that doesn't fit then fails to load. |
+| `HOB_PI_DEVICE` | `Vulkan0`² | The GPU to use. Set it to `""` to let llama.cpp use every GPU. |
+| `HOB_PI_ARGS` | — | Extra `llama-server` arguments, for example `--n-cpu-moe 20` |
+| `HOB_PI_SERVER` | Hob's | Path to a different `llama-server` binary |
 
-In fish: `set -Ux HOB_PI_CTX 65536`, for example.
+¹ `~/.config/Hob` on Linux, `~/Library/Application Support/Hob` on macOS, `%APPDATA%\Hob` on Windows.
 
-`llama-server --list-devices` lists the GPUs. Here `Vulkan0` is the RTX 5070 Ti and `Vulkan1` is the 890M. The extension uses `Vulkan0`. The server's log is `/tmp/hob-pi-8091.log`.
+² Not set on macOS. On machines with both an integrated and a discrete GPU, llama.cpp otherwise spreads the model across both, which is usually much slower than using the discrete GPU plus the CPU. To see which device is which, run `llama-server --list-devices`. If `Vulkan0` isn't your fastest GPU, set `HOB_PI_DEVICE` to the right one.
 
-## The manual way
+For example, to set a larger context:
 
-What the extension automates, if you'd rather run the server yourself (for example to share one server between several Pis):
+```sh
+export HOB_PI_CTX=65536        # bash, zsh
+set -Ux HOB_PI_CTX 65536       # fish
+```
 
-1. Start Hob's server on a model:
+The server's log is `hob-pi-<port>.log` in the system temp folder (`/tmp/hob-pi-8091.log` on Linux).
 
-   ```fish
-   set D ~/.config/Hob/vision/server-b11433/llama-b11433
-   env LD_LIBRARY_PATH=$D $D/llama-server -m ~/.config/Hob/models/gemma-4-E4B_q4_0-it.gguf \
-       --host 127.0.0.1 --port 8091 --jinja -ngl 99 -c 32768 --alias gemma-4-e4b
+## Running the server manually
+
+If you want to manage the server yourself, for example to share one server between several Pi sessions, you can skip the extension and set things up by hand.
+
+1. Start Hob's `llama-server` on a model. The build folder name changes when Hob updates its server.
+
+   ```sh
+   D=~/.config/Hob/vision/server-b11433/llama-b11433
+   LD_LIBRARY_PATH=$D $D/llama-server \
+     -m ~/.config/Hob/models/gemma-4-E4B_q4_0-it.gguf \
+     --host 127.0.0.1 --port 8091 --jinja -c 32768 --alias gemma-4-e4b
    ```
 
-   `--jinja` turns on the model's chat template, which tool calling needs. Wait for `curl -s 127.0.0.1:8091/health` to say `ok`.
+   `--jinja` turns on the model's chat template, which tool calling needs. The server is ready when `curl -s 127.0.0.1:8091/health` returns `ok`.
 
-2. Tell Pi about it in `~/.pi/agent/models.json`:
+2. Add a provider to `~/.pi/agent/models.json`:
 
    ```json
    {
@@ -98,27 +114,56 @@ What the extension automates, if you'd rather run the server yourself (for examp
          "api": "openai-completions",
          "apiKey": "none",
          "models": [
-           { "id": "gemma-4-e4b", "name": "Gemma 4 E4B (Hob)", "contextWindow": 32768, "maxTokens": 4096,
-             "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 } }
+           {
+             "id": "gemma-4-e4b",
+             "name": "Gemma 4 E4B (Hob)",
+             "contextWindow": 32768,
+             "maxTokens": 4096,
+             "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+           }
          ]
        }
      }
    }
    ```
 
-3. `pi --provider hob --model gemma-4-e4b`.
+3. Run `pi --provider hob --model gemma-4-e4b`.
 
-Don't use both ways at once on the same port: the extension won't touch a server it didn't start, and says so.
+Don't run a manual server and the extension on the same port. The extension won't take over a server it didn't start, and it reports the conflict instead.
 
-## In Impulse
+## Tested configuration
 
-Nothing extra is needed: Impulse's own Pi extension (Agent Integration ▸ Hooks ▸ Pi) works the same whatever model Pi uses. With Gemma 4 E4B, Pi called Impulse's tools (`impulse_list_tasks`), saw the other workspaces in its system prompt, and Impulse's merge question appeared in Pi's confirm dialog.
+Tested on an ASUS ROG Zephyrus G14 (RTX 5070 Ti Laptop GPU with 12 GB, Radeon 890M) on Linux, with Pi 1.5.0 and Hob 0.2.6 (`llama-server` build b11433, Vulkan).
+
+| Model | Size | Result |
+|---|---|---|
+| `gemma-4-e4b_q4_0-it` | 4.8 GB | Fits fully on the GPU; ~87 tokens/s. Handles simple tool use. |
+| `gemma-4-26b_q4_0-it` | 13.4 GB | MoE (4B active), partly on the CPU; ~40 tokens/s |
+| `qwen3.8-27b-ud-iq4_xs` | 13.3 GB | Dense, so slow when partly on the CPU |
+| `qwen3.6-35b-a3b-ud-iq4_xs` | 16.5 GB | MoE (3B active); best at tool calling, but tight on 12 GB VRAM |
+
+Pi also works inside Impulse with Impulse's Pi integration: tool calls, workspace context and confirmation prompts all behave as they do with cloud models.
 
 ## Troubleshooting
 
-- **`pi -p` hangs when run from a script:** it waits for input on stdin when stdin isn't a terminal. Add `</dev/null`.
-- **"Port 8091 already serves …":** another server (a manual one, or another Pi's) is on the port. Stop it, or set `HOB_PI_PORT`.
-- **"llama-server didn't start …":** read `/tmp/hob-pi-8091.log`. Usually out of GPU memory: unset `HOB_PI_NGL` if you set it, lower `HOB_PI_CTX`, pick a smaller model, or close what's on the GPU.
-- **Hob updates its server:** the folder name changes (`server-b<build>`). The extension finds the new one by itself; for the manual way, update the path.
-- **The model ignores tools or rambles:** small models do. Try `gemma-4-26b_q4_0-it` or `qwen3.6-35b-a3b-ud-iq4_xs` when the GPU is free.
-- **Pi's sign-in for other providers:** this doesn't need one. `/login` is only needed for cloud providers.
+**"llama-server didn't start …"**
+Check the server log. The usual cause is running out of GPU memory. Unset `HOB_PI_NGL` if you set it, lower `HOB_PI_CTX`, choose a smaller model, or close other GPU-heavy apps (including Hob itself).
+
+**"Port 8091 already serves …"**
+Another server is using the port, either one you started manually or another Pi session's. Stop it, or set `HOB_PI_PORT` to a different port.
+
+**"Hob's llama-server wasn't found …"**
+Enable Hob's vision feature so that Hob downloads its server, or point `HOB_PI_SERVER` to a `llama-server` binary of your own.
+
+**Generation is slow on a machine with two GPUs**
+Make sure `HOB_PI_DEVICE` names the discrete GPU (see `llama-server --list-devices`).
+
+**The model ignores tools or rambles**
+Small models often do. Try a larger model such as Gemma 4 26B or Qwen 3.6 35B-A3B.
+
+**`pi -p` hangs when run from a script**
+When stdin isn't a terminal, Pi waits for input on it. Redirect stdin: `pi -p "…" </dev/null`.
+
+## License
+
+[MIT](LICENSE)
